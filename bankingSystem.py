@@ -15,43 +15,51 @@ class Bank(mesa.Agent):
         self.borrowing = 0.       
         # equity
         self.equity = 0.           # initialize when creating the bank, update in updateBlanceSheet()
+        # deposit
+        self.deposit = 0.          
         # leverage ratio
         self.leverage = 0.        
         # if a bank is solvent
         self.default = False      # change at clearingDebt()
     
     def updateBlanceSheet(self):
-        self.equity = self.portfolio + self.lending - self.borrowing
+        self.equity = self.portfolio + self.lending - self.borrowing - self.deposit
         self.leverage = (self.portfolio + self.lending) / self.equity
         
     def borrowRequest(self):
-        for _ in range(self.model.num_borrowing):
-            if self.leverage < self.model.leverageRatio:
-                # randomly choose a bank to borrow from the trust matrix
-                target = np.random.choice(self.model.N, p=self.model.trustMatrix[self.unique_id])
-                # choose a borrowing amount equal to the equity capital
-                amount = self.equity * self.model.sizeOfBorrowing
-                # bring out the target bank and let him decide whether to lend
-                other_agent = self.model.schedule.agents[target]
-                # if the lending decision is made, update the balance sheet
-                if other_agent.lendDecision(self, amount):
-                    self.model.L[self.unique_id, target] += amount
-                    self.portfolio += amount
-                    self.model.e[self.unique_id] = self.portfolio
-                    self.borrowing += amount
-                    self.updateBlanceSheet()
-                    self.model.concentrationParameter[self.unique_id, target] += 1.
+        borrowingAmount = self.model.borrowingCollection[self.unique_id]
+        if borrowingAmount > 0:
+            for _ in range(self.model.num_borrowing):
+                if self.leverage < self.model.leverageRatio:
+                    # randomly choose a bank to borrow from the trust matrix
+                    target = np.random.choice(self.model.N, p=self.model.trustMatrix[self.unique_id])
+                    # choose a borrowing amount equal to the equity capital
+                    amount = borrowingAmount * self.model.sizeOfBorrowing
+                    # bring out the target bank and let him decide whether to lend
+                    other_agent = self.model.schedule.agents[target]
+                    # if the lending decision is made, update the balance sheet
+                    if other_agent.lendDecision(self, amount):
+                        self.model.L[self.unique_id, target] += amount
+                        self.portfolio += amount
+                        self.model.e[self.unique_id] = self.portfolio
+                        self.borrowing += amount
+                        self.updateBlanceSheet()
+                        self.model.concentrationParameter[self.unique_id, target] += 1.
                 
     # reinforcement learning update later. 
     def lendDecision(self, borrowingBank, amount):
-        # collect borrowing banks information, in this version, if the banks have enough liquidity, they will lend 
-        # borrowingBank's information could be access through borrowingBank 
-        if self.portfolio * (1-self.model.capitalReserve) > amount and np.random.rand() < 0.5:
-            self.portfolio -= amount
-            self.model.e[self.unique_id] = self.portfolio
-            self.lending += amount
-            # asset and equity amount remain unchanged, leverage ratio also remains unchanged
-            return True
+        lendingAmount = -self.model.borrowingCollection[self.unique_id]
+        if lendingAmount > amount:
+            # collect borrowing banks information, in this version, if the banks have enough liquidity, they will lend 
+            # borrowingBank's information could be access through borrowingBank 
+            if self.portfolio - self.deposit * self.model.capitalReserve > amount and np.random.rand() < 0.5:
+                self.portfolio -= amount
+                self.model.e[self.unique_id] = self.portfolio
+                self.lending += amount
+                # asset and equity amount remain unchanged, leverage ratio also remains unchanged
+                return True
+            else:
+                return False
         else:
             return False
             
@@ -65,11 +73,8 @@ class Bank(mesa.Agent):
         self.lending = 0.    
         # liabilities
         self.borrowing = 0.      
-        # equity
-        self.equity = self.portfolio   
-        # leverage ratio
-        self.leverage = 1.0
-        if self.portfolio == 0.:
+        self.updateBlanceSheet()
+        if self.equity <= 0.:
             self.default = True
     
     def step(self):
@@ -90,14 +95,18 @@ class bankingSystem(mesa.Model):
                  concentrationParameter = None, 
                  fedRate = 0., 
                  portfolioReturnRate = 0., 
+                 returnVolatiliy = 0.,
+                 gamma = None,
                  liquidityShockNum = 0,
                  shockSize = 0.0,
                  shockDuration=[-1,-1]):
         
         # interest rate
-        self.fedRate = fedRate
+        self.fedRate = (fedRate+1)**(1/252) - 1
         # portfolio return rate
-        self.portfolioReturnRate = portfolioReturnRate
+        self.portfolioReturnRate = (portfolioReturnRate+1)**(1/252) - 1
+        # portfolio return volatility
+        self.returnVolatiliy = returnVolatiliy/np.sqrt(252)
         # number of liquidity shocks
         self.liquidityShockNum = liquidityShockNum 
         # size of the shock
@@ -110,6 +119,8 @@ class bankingSystem(mesa.Model):
         self.alpha = alpha
         # interbank loan recovery rate
         self.beta = beta
+        # risk aversion parameter
+        self.gamma = gamma
         
         # read in banks equity capital
         banksData = pd.read_csv(banksFile).iloc[:num_banks,:]
@@ -130,15 +141,20 @@ class bankingSystem(mesa.Model):
         # liability matrix 
         self.L = np.zeros((self.N,self.N))
         # asset matrix
-        self.e = banksData["equity"].values.reshape(self.N,1)
+        self.e = (banksData["equity"].values + banksData["deposit"].values).reshape(self.N,1)
+        # deposit matrix
+        self.d = banksData["deposit"].values.reshape(self.N,1)
         # create a schedule for banks
         self.schedule = mesa.time.RandomActivation(self)
+        # target return and borrowing ratio
+        self.borrowingCollection = np.zeros(self.N,1)
     
         # create banks and put them in schedule
         for i in range(self.N):
             a = Bank(i, self)
-            a.portfolio = banksData["equity"][i]
+            a.deposit = banksData["deposit"][i]
             a.equity = banksData["equity"][i]
+            a.portfolio = a.deposit + a.equity
             self.schedule.add(a)
             
         self.datacollector = mesa.DataCollector(
@@ -151,7 +167,14 @@ class bankingSystem(mesa.Model):
                                 "Equity": "equity",
                                 "Default": "default",
                                 "Leverage": "leverage"})
-        
+    
+    # determine how much to borrow
+    def calculateBudget(self):
+        # target investment ratio on the risky asset
+        targetRatio = (self.portfolioReturnRate-self.fedRate)/(self.gammas*(self.returnVolatiliy**2))
+        # positive amount indicate borrowing and negative amount indicate lending
+        self.borrowingCollection = (targetRatio - 1) * self.e 
+    
     def updateTrustMatrix(self):
         # add time decay of concentration parameter
         self.concentrationParameter = self.concentrationParameter / self.concentrationParameter.sum(axis=1, keepdims=True) * (self.N - 1)
@@ -159,8 +182,9 @@ class bankingSystem(mesa.Model):
             
     def clearingDebt(self):
         # Returns the new portfolio value after clearing debt
-        _, e, insolventBanks = eisenbergNoe(self.L*(1+self.fedRate), self.e, self.alpha, self.beta)
+        _, e = eisenbergNoe(self.L*(1+self.fedRate), self.e, self.alpha, self.beta)
         self.e = e
+        insolventBanks = np.where(self.e - self.d <= 0)[0]
         # reset the Liabilities matrix after clearing debt
         self.L = np.zeros((self.N,self.N))
         if len(insolventBanks) > 0:

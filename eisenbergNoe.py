@@ -45,7 +45,7 @@ def eisenbergNoe(L, e, alpha, beta):
             x = np.linalg.inv(np.eye(insolventBanks.size)- beta*(Pi[insolventBanks].T)[insolventBanks]) @ (alpha * e[insolventBanks] + beta*((Pi[solventBanks].T)[insolventBanks]@L_bar[solventBanks]))
             # update insolvent banks payments
             A[insolventBanks] = x
-    return A, (Pi.T @ A + e - A)*(A >= L_bar), insolventBanks
+    return A, (Pi.T @ A + e - A)*(A >= L_bar)
 
 # function to test if A is the fixed point of phi
 def phi(A, L, e, alpha, beta):
