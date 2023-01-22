@@ -13,7 +13,7 @@ def netWorkGraph(matrix, model, printLabel=True):
     weightedEdges = []
     for i in range(size):
         for j in range(size):
-            if matrix[i][j] > 0.2:
+            if matrix[i][j] > 0.1:
                 # direction of the edge is the direction of the money flow
                 weightedEdges.append((j, i, matrix[i][j]))
     G.add_weighted_edges_from(weightedEdges)

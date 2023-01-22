@@ -13,21 +13,22 @@ class Bank(mesa.Agent):
         self.lending = 0.         
         # liabilities
         self.borrowing = 0.       
+        self.deposit = 0.          # initialize when creating the bank, assume not changing in this version
         # equity
         self.equity = 0.           # initialize when creating the bank, update in updateBlanceSheet()
-        # deposit
-        self.deposit = 0.          
         # leverage ratio
         self.leverage = 0.        
         # if a bank is solvent
         self.default = False      # change at clearingDebt()
     
     def updateBlanceSheet(self):
+        # equity = asset - liability
         self.equity = self.portfolio + self.lending - self.borrowing - self.deposit
+        # leverage ratio = asset / equity
         self.leverage = (self.portfolio + self.lending) / self.equity
         
     def borrowRequest(self):
-        borrowingAmount = self.model.borrowingCollection[self.unique_id]
+        borrowingAmount = self.model.targetBorrowingLending[self.unique_id]
         if borrowingAmount > 0:
             for _ in range(self.model.num_borrowing):
                 if self.leverage < self.model.leverageRatio:
@@ -45,28 +46,27 @@ class Bank(mesa.Agent):
                         self.borrowing += amount
                         self.updateBlanceSheet()
                         self.model.concentrationParameter[self.unique_id, target] += 1.
+                        borrowingAmount -= amount
+                if borrowingAmount <= 0:
+                    break
                 
     # reinforcement learning update later. 
     def lendDecision(self, borrowingBank, amount):
-        lendingAmount = -self.model.borrowingCollection[self.unique_id]
+        lendingAmount = -self.model.targetBorrowingLending[self.unique_id]
         if lendingAmount > amount:
             # collect borrowing banks information, in this version, if the banks have enough liquidity, they will lend 
             # borrowingBank's information could be access through borrowingBank 
-            if self.portfolio - self.deposit * self.model.capitalReserve > amount and np.random.rand() < 0.5:
+            if self.portfolio - self.deposit * self.model.capitalReserve > amount:
                 self.portfolio -= amount
                 self.model.e[self.unique_id] = self.portfolio
                 self.lending += amount
                 # asset and equity amount remain unchanged, leverage ratio also remains unchanged
+                self.model.targetBorrowingLending[self.unique_id] += amount
                 return True
             else:
                 return False
         else:
             return False
-            
-    def returnOnPortfolio(self):
-        self.portfolio = self.portfolio * (1+self.model.portfolioReturnRate)
-        self.model.e[self.unique_id] = self.portfolio
-        self.updateBlanceSheet()
     
     def reset(self):
         self.portfolio = self.model.e[self.unique_id][0]
@@ -80,7 +80,6 @@ class Bank(mesa.Agent):
     def step(self):
         if not self.default:
             self.borrowRequest()
-            self.returnOnPortfolio()
     
 
 class bankingSystem(mesa.Model):
@@ -96,7 +95,8 @@ class bankingSystem(mesa.Model):
                  fedRate = 0., 
                  portfolioReturnRate = 0., 
                  returnVolatiliy = 0.,
-                 gamma = None,
+                 returnCorrelation = np.diag(np.ones(100)),
+                 gammas = np.ones((100,1))*1.7316,
                  liquidityShockNum = 0,
                  shockSize = 0.0,
                  shockDuration=[-1,-1]):
@@ -107,6 +107,8 @@ class bankingSystem(mesa.Model):
         self.portfolioReturnRate = (portfolioReturnRate+1)**(1/252) - 1
         # portfolio return volatility
         self.returnVolatiliy = returnVolatiliy/np.sqrt(252)
+        # return correlation matrix
+        self.returnCorrelation = returnCorrelation
         # number of liquidity shocks
         self.liquidityShockNum = liquidityShockNum 
         # size of the shock
@@ -120,7 +122,7 @@ class bankingSystem(mesa.Model):
         # interbank loan recovery rate
         self.beta = beta
         # risk aversion parameter
-        self.gamma = gamma
+        self.gammas = gammas
         
         # read in banks equity capital
         banksData = pd.read_csv(banksFile).iloc[:num_banks,:]
@@ -146,8 +148,8 @@ class bankingSystem(mesa.Model):
         self.d = banksData["deposit"].values.reshape(self.N,1)
         # create a schedule for banks
         self.schedule = mesa.time.RandomActivation(self)
-        # target return and borrowing ratio
-        self.borrowingCollection = np.zeros(self.N,1)
+        # target borrowing and lending amount based on risk aversion parameter
+        self.targetBorrowingLending = np.zeros((self.N,1))
     
         # create banks and put them in schedule
         for i in range(self.N):
@@ -168,17 +170,16 @@ class bankingSystem(mesa.Model):
                                 "Default": "default",
                                 "Leverage": "leverage"})
     
-    # determine how much to borrow
     def calculateBudget(self):
         # target investment ratio on the risky asset
         targetRatio = (self.portfolioReturnRate-self.fedRate)/(self.gammas*(self.returnVolatiliy**2))
         # positive amount indicate borrowing and negative amount indicate lending
-        self.borrowingCollection = (targetRatio - 1) * self.e 
+        self.targetBorrowingLending = ((targetRatio - 1) * self.e)
     
     def updateTrustMatrix(self):
         # add time decay of concentration parameter
-        self.concentrationParameter = self.concentrationParameter / self.concentrationParameter.sum(axis=1, keepdims=True) * (self.N - 1)
-        self.trustMatrix = self.concentrationParameter / (self.N - 1)
+        self.concentrationParameter = self.concentrationParameter / self.concentrationParameter.sum(axis=1, keepdims=True) * (self.N - 1) * 2.
+        self.trustMatrix = self.concentrationParameter / (self.N - 1) / 2.
             
     def clearingDebt(self):
         # Returns the new portfolio value after clearing debt
@@ -189,23 +190,41 @@ class bankingSystem(mesa.Model):
         self.L = np.zeros((self.N,self.N))
         if len(insolventBanks) > 0:
             self.concentrationParameter[:,insolventBanks] = 0
+            self.e[insolventBanks] = 0
         for agent in self.schedule.agents:
             agent.reset()
+            
+    def returnOnPortfolio(self):
+        # Return on the portfolio:
+        self.e = self.e * (1 + self.portfolioReturnRate + self.returnVolatiliy * (self.returnCorrelation @ np.random.randn(self.N,1)))
             
     def liquidityShock(self):
         # liquidity shock to banks portfolio
         if self.schedule.time >= self.shockDuration[0] and self.schedule.time <= self.shockDuration[1]:
             if self.liquidityShockNum > 0:
                 for _ in range(self.liquidityShockNum):
-                    # randomly choose a bank to be insolvent
+                    # randomly choose a bank to receive the shock
                     exposedBank = np.random.choice(self.N)
                     # set the bank's equity to drop
                     self.e[exposedBank] *= (1-self.shockSize)
                     self.shockedBanks[exposedBank] += 1
+    
+    def correlatedShock(self):
+        # liquidity shock to banks portfolio
+        if self.schedule.time >= self.shockDuration[0] and self.schedule.time <= self.shockDuration[1]:
+            if self.liquidityShockNum > 0:
+                portReturn = self.portfolioReturnRate
+                self.portfolioReturnRate = -self.shockSize
+                for _ in range(self.liquidityShockNum):
+                    self.returnOnPortfolio()
+                self.portfolioReturnRate = portReturn
 
     def simulate(self):
+        self.calculateBudget()
         self.schedule.step()
-        self.liquidityShock()
         self.updateTrustMatrix()
+        self.returnOnPortfolio()
+        self.liquidityShock()
+        # self.correlatedShock()
         self.datacollector.collect(self)
         self.clearingDebt()
