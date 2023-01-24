@@ -35,3 +35,22 @@ def netWorkGraph(matrix, model, printLabel=True):
     nx.draw_networkx_edges(G, pos, width=edgesWidth, alpha=0.5, connectionstyle="arc3,rad=0.05")
     plt.axis('off')
     plt.show()
+
+    
+def simulationMonitor(agent_data, model_data, simulationSteps):
+    numberOfDefault = [agent_data.xs(i, level="Step")["Default"].sum() for i in range(simulationSteps)]
+    averageLeverage = [agent_data.xs(i, level="Step")["Leverage"].sum() / (100 - agent_data.xs(i, level="Step")["Default"].sum()) for i in range(simulationSteps)]
+    fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, 1)
+    fig.set_size_inches(40, 40)
+    ax1.set_title("Single simulation average leverage")
+    ax1.plot(range(simulationSteps), averageLeverage)
+    ax2.plot(range(simulationSteps), [agent_data.xs(i, level="Step")["PortfolioValue"].sum() for i in range(simulationSteps)])
+    ax2.set_title("Single simulation Aggregated Asset Values")
+    ax3.bar(range(1, simulationSteps), np.diff(numberOfDefault))
+    ax3.set_title("Single simulation Number of default banks")
+    ax4.plot(np.array([[model_data["Liability Matrix"][i].sum() for i in range(simulationSteps)] for j in range(10)]).mean(axis=0))
+    ax4.set_title("Size of borrowing")
+    for i in [0,10,20,40,80,499]:
+        ax5.plot(range(100),model_data["Trust Matrix"][i].sum(axis = 0), label = "step " + str(i))
+    ax5.set_title("Accumulated belief of approving loan requests")
+    plt.show()
