@@ -2,8 +2,6 @@ import mesa
 import numpy as np
 import pandas as pd
 from eisenbergNoe import eisenbergNoe
-from collections import defaultdict
-
 
 class Bank(mesa.Agent):
     def __init__(self, unique_id, model):
@@ -83,6 +81,11 @@ class Bank(mesa.Agent):
             self.lending = 0.    
             self.borrowing = 0.      
             self.updateBlanceSheet()
+            # if the leverage ratio is too high, the bank will pay off the deposit, equity value remains unchanged
+            if self.leverage > self.model.leverageRatio:
+                self.portfolio = self.equity * self.model.leverageRatio
+                self.deposit = self.portfolio - self.equity
+                self.leverage = self.model.leverageRatio
     
     def step(self):
         if not self.default:
@@ -122,8 +125,6 @@ class bankingSystem(mesa.Model):
         self.shockSize = shockSize
         # time of the shock
         self.shockDuration = shockDuration
-        # shocked banks
-        self.shockedBanks = defaultdict(int)
         # asset recovery rate 
         self.alpha = alpha
         # interbank loan recovery rate
@@ -210,13 +211,10 @@ class bankingSystem(mesa.Model):
         # liquidity shock to banks portfolio
         if self.schedule.time >= self.shockDuration[0] and self.schedule.time <= self.shockDuration[1]:
             if self.liquidityShockNum > 0:
-                for _ in range(self.liquidityShockNum):
-                    # randomly choose a bank to receive the shock
-                    exposedBank = np.random.choice(self.N)
-                    # set the bank's equity to drop
-                    self.e[exposedBank] -= (self.e[exposedBank] - 
-                                            self.d[exposedBank] * self.depositReserve)*self.shockSize
-                    self.shockedBanks[exposedBank] += 1
+                exposedBank = np.random.choice(self.N, self.liquidityShockNum,replace=False)
+                # set the bank's equity to drop
+                self.e[exposedBank] -= (self.e[exposedBank] - 
+                                        self.d[exposedBank] * self.depositReserve)*self.shockSize
     
     def correlatedShock(self):
         # liquidity shock to banks portfolio
