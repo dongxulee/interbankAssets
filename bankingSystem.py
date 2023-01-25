@@ -84,7 +84,9 @@ class Bank(mesa.Agent):
             # if the leverage ratio is too high, the bank will pay off the deposit, equity value remains unchanged
             if self.leverage > self.model.leverageRatio:
                 self.portfolio = self.equity * self.model.leverageRatio
+                self.model.e[self.unique_id] = self.portfolio
                 self.deposit = self.portfolio - self.equity
+                self.model.d[self.unique_id] = self.deposit
                 self.leverage = self.model.leverageRatio
     
     def step(self):
@@ -129,6 +131,8 @@ class bankingSystem(mesa.Model):
         self.alpha = alpha
         # interbank loan recovery rate
         self.beta = beta
+        # learning parameter 
+        self.theta = np.zeros(2)
         # risk aversion parameter
         self.gammas = gammas
         
@@ -181,6 +185,8 @@ class bankingSystem(mesa.Model):
     
     def calculateBudget(self):
         # target investment ratio on the risky asset
+        leverage = self.e/(self.e - self.d) 
+        # gammas =  
         targetRatio = (self.portfolioReturnRate-self.fedRate)/(self.gammas*(self.returnVolatiliy**2))
         # positive amount indicate borrowing and negative amount indicate lending
         self.targetBorrowingLending = ((targetRatio - 1) * (self.e-self.d * self.depositReserve))
