@@ -111,7 +111,8 @@ class bankingSystem(mesa.Model):
                  gammas = np.ones((100,1))*1.7316,
                  liquidityShockNum = 0,
                  shockSize = 0.0,
-                 shockDuration=[-1,-1]):
+                 shockDuration=[-1,-1],
+                 theta = np.zeros((2,1))):
         
         # interest rate
         self.fedRate = (fedRate+1)**(1/252) - 1
@@ -131,6 +132,10 @@ class bankingSystem(mesa.Model):
         self.alpha = alpha
         # interbank loan recovery rate
         self.beta = beta
+        # learning parameter 
+        self.theta = theta
+        # accumulate gradient 
+        self.grad = np.zeros((num_banks, 2))
         # risk aversion parameter
         self.gammas = gammas
         
@@ -181,9 +186,21 @@ class bankingSystem(mesa.Model):
                                 "Default": "default",
                                 "Leverage": "leverage"})
     
+    
+    def sigmoid(self,x):
+        return 1/(1+np.exp(-x))
+    
     def calculateBudget(self):
-        # target investment ratio on the risky asset
-        targetRatio = (self.portfolioReturnRate-self.fedRate)/(self.gammas*(self.returnVolatiliy**2))
+        # target investment ratio on the risky asset, (leverage, size)
+        state = np.concatenate((self.e/(self.e - self.d), self.e), axis=1)
+        # standardized state
+        state = (state - state.mean(axis = 0))/state.std(axis = 0)
+        random = np.random.randn(100,1)*0.01
+        self.grad += state * random
+        actions = state @ self.theta + random 
+        gamma_lower = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 2
+        gamma_upper = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 0.5
+        targetRatio = self.sigmoid(actions) * (gamma_upper - gamma_lower) + gamma_lower
         # positive amount indicate borrowing and negative amount indicate lending
         self.targetBorrowingLending = ((targetRatio - 1) * (self.e-self.d * self.depositReserve))
     
