@@ -6,10 +6,8 @@ def R_tau(model):
     value = (model.e - modele)/modele
     return value
 
-thetas = np.zeros((2,1000))
-rewards = np.zeros(1000)
-theta = np.zeros((2,1))
-for i in range(1000):
+def f(theta):
+    theta = np.array(theta).reshape(-1,1) 
     # simulation and data collection
     simulationSteps = 500
     model = bankingSystem(banksFile="balanceSheetAnalysis/banksData_2022.csv", # csv file used to initialize the bank agents
@@ -35,9 +33,38 @@ for i in range(1000):
         model.simulate()
     
     reward = R_tau(model)
-    theta += (model.grad * reward).mean(axis = 0).reshape(-1,1) * 0.01
-    print(i)
-    print(theta)
-    thetas[:,i] = theta.reshape(-1)
-    print(reward.sum())
-    rewards[i] = reward.sum()
+    return -reward.sum()
+
+from skopt import gp_minimize
+from skopt.space import Real
+from skopt.plots import plot_convergence, plot_evaluations, plot_objective
+import pickle
+
+
+# Define the search space
+space = [Real(-3, 3), Real(-3, 3)]
+
+# Perform the optimization
+res = gp_minimize(f, space, n_points = 10, n_calls=1000, n_jobs=10)
+
+# Save the results to a file
+with open("results.pickle", "wb") as f:
+    pickle.dump(res, f)
+    
+# # Load the results from a file
+# with open("results.pickle", "rb") as f:
+#     res = pickle.load(f)
+
+
+# Print the results
+print("Minimum found at: ",res.x)
+print("Minimum value found: ",res.fun)
+
+# Plot the convergence
+plot_convergence(res)
+
+# Plot the evaluations
+plot_evaluations(res)
+
+# Plot the objective
+plot_objective(res)

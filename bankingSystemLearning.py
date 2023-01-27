@@ -195,12 +195,13 @@ class bankingSystem(mesa.Model):
         state = np.concatenate((self.e/(self.e - self.d), self.e), axis=1)
         # standardized state
         state = (state - state.mean(axis = 0))/state.std(axis = 0)
-        random = np.random.randn(100,1)*0.01
+        random = np.random.randn(100,1)*0.1
         self.grad += state * random
         actions = state @ self.theta + random 
         gamma_lower = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 2
         gamma_upper = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 0.5
-        targetRatio = self.sigmoid(actions) * (gamma_upper - gamma_lower) + gamma_lower
+        gammas = self.sigmoid(actions) * (gamma_upper - gamma_lower) + gamma_lower
+        targetRatio = (self.portfolioReturnRate - self.fedRate)/(gammas*(self.returnVolatiliy**2))
         # positive amount indicate borrowing and negative amount indicate lending
         self.targetBorrowingLending = ((targetRatio - 1) * (self.e-self.d * self.depositReserve))
     
@@ -252,5 +253,5 @@ class bankingSystem(mesa.Model):
         self.returnOnPortfolio()
         self.liquidityShock()
         # self.correlatedShock()
-        self.datacollector.collect(self)
+        # self.datacollector.collect(self)
         self.clearingDebt()
