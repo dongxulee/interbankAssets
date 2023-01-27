@@ -45,7 +45,7 @@ import pickle
 space = [Real(-3, 3), Real(-3, 3)]
 
 # Perform the optimization
-res = gp_minimize(f, space, n_points = 10, n_calls=1000, n_jobs=10)
+res = gp_minimize(f, space, n_calls=100, n_jobs=10)
 
 # Save the results to a file
 with open("results.pickle", "wb") as f:
