@@ -37,7 +37,9 @@ def netWorkGraph(matrix, model, printLabel=True):
     plt.show()
 
     
-def simulationMonitor(agent_data, model_data, simulationSteps):
+def simulationMonitor(model,simulationSteps):
+    agent_data = model.datacollector.get_agent_vars_dataframe()
+    model_data = model.datacollector.get_model_vars_dataframe()
     numberOfDefault = [agent_data.xs(i, level="Step")["Default"].sum() for i in range(simulationSteps)]
     averageLeverage = [agent_data.xs(i, level="Step")["Leverage"].sum() / (100 - agent_data.xs(i, level="Step")["Default"].sum()) for i in range(simulationSteps)]
     fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, 1)

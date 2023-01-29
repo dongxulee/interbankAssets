@@ -134,8 +134,6 @@ class bankingSystem(mesa.Model):
         self.beta = beta
         # learning parameter 
         self.theta = theta
-        # accumulate gradient 
-        self.grad = np.zeros((num_banks, 2))
         # risk aversion parameter
         self.gammas = gammas
         
@@ -191,12 +189,11 @@ class bankingSystem(mesa.Model):
         return 1/(1+np.exp(-x))
     
     def calculateBudget(self):
-        # target investment ratio on the risky asset, (leverage, size)
-        state = np.concatenate((self.e/(self.e - self.d), self.e), axis=1)
+        # target investment ratio on the risky asset, (leverage, log(size))
+        state = np.concatenate((self.e/(self.e - self.d), np.log(self.e)), axis=1)
         # standardized state
         state = (state - state.mean(axis = 0))/state.std(axis = 0)
         random = np.random.randn(100,1)*0.1
-        self.grad += state * random
         actions = state @ self.theta + random 
         gamma_lower = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 2
         gamma_upper = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 0.5
@@ -204,6 +201,7 @@ class bankingSystem(mesa.Model):
         targetRatio = (self.portfolioReturnRate - self.fedRate)/(gammas*(self.returnVolatiliy**2))
         # positive amount indicate borrowing and negative amount indicate lending
         self.targetBorrowingLending = ((targetRatio - 1) * (self.e-self.d * self.depositReserve))
+
     
     def updateTrustMatrix(self):
         # add time decay of concentration parameter

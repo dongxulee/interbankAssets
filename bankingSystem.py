@@ -190,6 +190,7 @@ class bankingSystem(mesa.Model):
         targetRatio = (self.portfolioReturnRate-self.fedRate)/(self.gammas*(self.returnVolatiliy**2))
         # positive amount indicate borrowing and negative amount indicate lending
         self.targetBorrowingLending = ((targetRatio - 1) * (self.e-self.d * self.depositReserve))
+        return targetRatio
     
     def updateTrustMatrix(self):
         # add time decay of concentration parameter
