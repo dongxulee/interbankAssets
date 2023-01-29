@@ -190,7 +190,7 @@ class bankingSystem(mesa.Model):
     
     def calculateBudget(self):
         # target investment ratio on the risky asset, (leverage, log(size))
-        state = np.concatenate((self.e/(self.e - self.d), np.log(self.e)), axis=1)
+        state = np.concatenate((self.e/(self.e - self.d), np.log(1. + self.e)), axis=1)
         # standardized state
         state = (state - state.mean(axis = 0))/state.std(axis = 0)
         random = np.random.randn(100,1)*0.1
