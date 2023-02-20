@@ -31,7 +31,8 @@ class Bank(mesa.Agent):
             for _ in range(self.model.num_borrowing):
                 if self.leverage < self.model.leverageRatio:
                     # randomly choose a bank to borrow from the trust matrix
-                    target = np.random.choice(self.model.N, p=self.model.trustMatrix[self.unique_id])
+                    prob = self.model.trustMatrix[self.unique_id]
+                    target = np.random.choice(self.model.N, p=prob)
                     # choose a borrowing amount equal to the equity capital
                     amount = borrowingAmount * self.model.sizeOfBorrowing
                     # bring out the target bank and let him decide whether to lend
@@ -108,7 +109,6 @@ class bankingSystem(mesa.Model):
                  portfolioReturnRate = 0., 
                  returnVolatiliy = 0.,
                  returnCorrelation = np.diag(np.ones(100)),
-                 gammas = np.ones((100,1))*1.7316,
                  liquidityShockNum = 0,
                  shockSize = 0.0,
                  shockDuration=[-1,-1],
@@ -122,6 +122,7 @@ class bankingSystem(mesa.Model):
         self.returnVolatiliy = returnVolatiliy/np.sqrt(252)
         # return correlation matrix
         self.returnCorrelation = returnCorrelation
+        self.Cholesky = np.linalg.cholesky(returnCorrelation * self.returnVolatiliy**2)
         # number of liquidity shocks
         self.liquidityShockNum = liquidityShockNum 
         # size of the shock
@@ -134,8 +135,6 @@ class bankingSystem(mesa.Model):
         self.beta = beta
         # learning parameter 
         self.theta = theta
-        # risk aversion parameter
-        self.gammas = gammas
         
         # read in banks equity capital
         banksData = pd.read_csv(banksFile).iloc[:num_banks,:]
@@ -152,7 +151,7 @@ class bankingSystem(mesa.Model):
             np.fill_diagonal(self.concentrationParameter, 0.)
         else:
             self.concentrationParameter = concentrationParameter
-        self.trustMatrix = self.concentrationParameter / (self.N-1.)
+        self.trustMatrix = self.concentrationParameter / (self.N-1.) / self.num_borrowing
         # liability matrix 
         self.L = np.zeros((self.N,self.N))
         # asset matrix
@@ -173,7 +172,7 @@ class bankingSystem(mesa.Model):
             self.schedule.add(a)
             
         self.datacollector = mesa.DataCollector(
-            model_reporters={"Trust Matrix": "trustMatrix", 
+            model_reporters={"Trust Matrix": "trustMatrix",
                              "Liability Matrix": "L",
                              "Asset Matrix": "e"},
             agent_reporters={"PortfolioValue": "portfolio",
@@ -190,9 +189,9 @@ class bankingSystem(mesa.Model):
     
     def calculateBudget(self):
         # target investment ratio on the risky asset, (leverage, log(size))
-        state = np.concatenate((self.e/(self.e - self.d), np.log(1. + self.e)), axis=1)
+        state = np.concatenate((self.e/(self.e - self.d + 0.01), np.log(1. + self.e)), axis=1)
         # standardized state
-        state = (state - state.mean(axis = 0))/state.std(axis = 0)
+        state = (state - state.mean(axis = 0))/(state.std(axis = 0) + 0.01)
         random = np.random.randn(100,1)*0.1
         actions = state @ self.theta + random 
         gamma_lower = (self.portfolioReturnRate - self.fedRate) / self.returnVolatiliy**2 / 2
@@ -208,7 +207,7 @@ class bankingSystem(mesa.Model):
         self.concentrationParameter = self.concentrationParameter / self.concentrationParameter.sum(axis=1, keepdims=True) * (self.N - 1) * self.num_borrowing
         self.trustMatrix = self.concentrationParameter / (self.N - 1) / self.num_borrowing
             
-    def clearingDebt(self):
+    def clearingDebt(self): 
         # Returns the new portfolio value after clearing debt
         _, e = eisenbergNoe(self.L*(1+self.fedRate), self.e, self.alpha, self.beta)
         self.e = e
@@ -220,11 +219,11 @@ class bankingSystem(mesa.Model):
             self.e[insolventBanks] = 0
         for agent in self.schedule.agents:
             agent.reset()
-            
+
     def returnOnPortfolio(self):
         # Return on the portfolio:
-        self.e += (self.e - self.d*self.depositReserve) * (self.portfolioReturnRate + self.returnVolatiliy * (self.returnCorrelation @ np.random.randn(self.N,1)))      
-              
+        self.e += (self.e - self.d*self.depositReserve) * (self.portfolioReturnRate + (self.Cholesky @ np.random.randn(self.N,1)))
+           
     def liquidityShock(self):
         # liquidity shock to banks portfolio
         if self.schedule.time >= self.shockDuration[0] and self.schedule.time <= self.shockDuration[1]:
@@ -237,19 +236,16 @@ class bankingSystem(mesa.Model):
     def correlatedShock(self):
         # liquidity shock to banks portfolio
         if self.schedule.time >= self.shockDuration[0] and self.schedule.time <= self.shockDuration[1]:
-            if self.liquidityShockNum > 0:
-                portReturn = self.portfolioReturnRate
-                self.portfolioReturnRate = -self.shockSize
-                for _ in range(self.liquidityShockNum):
-                    self.returnOnPortfolio()
-                self.portfolioReturnRate = portReturn
+            # set the bank's equity to drop
+            self.e -= (self.e - self.d * self.depositReserve)*(self.shockSize + 5*self.Cholesky @ np.random.randn(self.N,1))
 
     def simulate(self):
+        # only one banks remains solvent
         self.updateTrustMatrix()
         self.calculateBudget()
         self.schedule.step()
         self.returnOnPortfolio()
-        self.liquidityShock()
-        # self.correlatedShock()
-        # self.datacollector.collect(self)
+        #self.liquidityShock()
+        self.correlatedShock()
+        self.datacollector.collect(self)
         self.clearingDebt()
