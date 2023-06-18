@@ -15,7 +15,7 @@ varNamesOverYearsPlus = pickle.load(open(dirName + "varNamesOverYearsPlus.pkl", 
 
 def loadData():
     # Read cached data
-    years = np.arange(2001,2023)
+    years = np.arange(2001,2024)
     dirName = "pickleData/"
     # show all the file names under the folder
     files = sorted(os.listdir(dirName))
